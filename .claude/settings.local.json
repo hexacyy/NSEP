@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api *)",
+      "Bash(Remove-Item -Recurse -Force \"mecanum-robot/.git\")",
+      "Bash(Rename-Item -Path \"mecanum-robot\" -NewName \"Mecanum Robot\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(git pull *)",
+      "Bash(git stash *)"
+    ]
+  }
+}

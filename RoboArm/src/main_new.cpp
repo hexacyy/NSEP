@@ -71,15 +71,24 @@ struct Joint {
     int         home;
     int         cur;
     bool        invert;
+    uint16_t    minUs;   // µs at lo° (physical min pulse)
+    uint16_t    maxUs;   // µs at hi° (physical max pulse)
 };
 
+// ── Fill in minUs / maxUs from your physical measurements ───────────────────
+//   minUs = pulse width (µs) that moves this servo to its lo° position
+//   maxUs = pulse width (µs) that moves this servo to its hi° position
+//   Typical hobby servo range: 500–2500 µs  (check your servo datasheet)
+//   counts = us * 4096 / 20000  (at 50 Hz)
+// ─────────────────────────────────────────────────────────────────────────────
 Joint joints[6] = {
-    { "Base",        5,   0, 180,  90,  90, false },
-    { "Shoulder",    0,  30, 150,  90,  90, true  },
-    { "Elbow",       1,   0, 135,  90,  90, false },
-    { "Wrist Pitch", 2,   0, 180,  90,  90, false },
-    { "Wrist Roll",  3,   0, 180,  90,  90, false },
-    { "Gripper",     4,   0,  90,  45,  45, false },
+    //  name            ch   lo   hi   home  cur    inv   minUs  maxUs
+    { "Base",            5,   0, 270,  135,  135,  false,   500,  2500 },
+    { "Shoulder",        0,  30, 150,   90,   90,  true,    500,  2500 },
+    { "Elbow",           1,   0, 180,   90,   90,  false,   500,  2500 },
+    { "Wrist Pitch",     2,   0, 180,   90,   90,  false,   500,  2500 },
+    { "Wrist Roll",      3,   0, 180,   90,   90,  false,   500,  2500 },
+    { "Gripper",         4,   0,  90,   45,   45,  false,   500,  2500 },
 };
 
 const int POSE_HOME [6] = { 90, 90, 90, 90, 90, 45 };
@@ -113,14 +122,16 @@ struct WsMsg { char buf[96]; };
 QueueHandle_t wsQueue;
 bool pendingBroadcast = false;
 
-uint16_t pwmTable[181];
-
 static char statusBuf[220];
 static char posesBuf[3000];
 
 // ─── Servo ──────────────────────────────────────────────────────────────────
-inline uint16_t toCounts(int a) {
-    return pwmTable[a < 0 ? 0 : (a > 180 ? 180 : a)];
+inline uint16_t toCounts(const Joint& j, int angle) {
+    long us = (long)j.minUs +
+              ((long)(angle - j.lo) * ((long)j.maxUs - j.minUs)) / (j.hi - j.lo);
+    long lo = min((long)j.minUs, (long)j.maxUs);
+    long hi = max((long)j.minUs, (long)j.maxUs);
+    return (uint16_t)(constrain(us, lo, hi) * 4096L / 20000L);
 }
 
 void setServo(uint8_t i, int angle) {
@@ -129,7 +140,7 @@ void setServo(uint8_t i, int angle) {
     joyF[i]       = (float)angle;
     int phys = joints[i].invert ? (joints[i].lo + joints[i].hi - angle) : angle;
     if (xSemaphoreTake(servoMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-        pca9685.setPWM(joints[i].ch, 0, toCounts(phys));
+        pca9685.setPWM(joints[i].ch, 0, toCounts(joints[i], phys));
         xSemaphoreGive(servoMutex);
     }
 }
@@ -137,7 +148,7 @@ void setServo(uint8_t i, int angle) {
 inline void sendPWM(uint8_t i, int angle) {
     joints[i].cur = angle;
     int phys = joints[i].invert ? (joints[i].lo + joints[i].hi - angle) : angle;
-    pca9685.setPWM(joints[i].ch, 0, toCounts(phys));
+    pca9685.setPWM(joints[i].ch, 0, toCounts(joints[i], phys));
 }
 
 void smoothMove(uint8_t i, int target, uint8_t steps = 40, uint8_t ms = 15) {
@@ -810,9 +821,75 @@ void processSerial() {
         Serial.printf("  Playing/Cyc : %s / %s\n", isPlaying?"yes":"no", isCycling?"yes":"no");
         Serial.printf("  WiFi RSSI   : %d dBm\n", (int)WiFi.RSSI());
     }
+    else if (cmd.startsWith("RAW ")) {
+        int s1 = cmd.indexOf(' '), s2 = cmd.indexOf(' ', s1+1);
+        if (s2 < 0) { Serial.println("Usage: RAW <joint 0-5> <counts 0-4095>"); return; }
+        int j = cmd.substring(s1+1, s2).toInt();
+        int c = cmd.substring(s2+1).toInt();
+        if (j < 0 || j >= 6) { Serial.println("Joint 0-5"); return; }
+        c = constrain(c, 0, 4095);
+        if (xSemaphoreTake(servoMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+            pca9685.setPWM(joints[j].ch, 0, c);
+            xSemaphoreGive(servoMutex);
+        }
+        Serial.printf("[RAW] %-12s ch%d  counts=%d  ~%lu us\n",
+            joints[j].name, joints[j].ch, c, (unsigned long)c * 20000UL / 4096UL);
+    }
+    else if (cmd == "CALSHOW") {
+        Serial.println("-- Calibration (50 Hz, 4096 counts/period) --");
+        Serial.println("  #  Name           ch   lo   hi  minUs  maxUs  minCnt maxCnt");
+        for (int i = 0; i < 6; i++) {
+            uint16_t cLo = toCounts(joints[i], joints[i].lo);
+            uint16_t cHi = toCounts(joints[i], joints[i].hi);
+            Serial.printf("  %d  %-12s  %2d  %3d  %3d   %4u   %4u   %4u   %4u\n",
+                i, joints[i].name, joints[i].ch,
+                joints[i].lo, joints[i].hi,
+                joints[i].minUs, joints[i].maxUs, cLo, cHi);
+        }
+        Serial.println("-- Live servo state --");
+        Serial.println("  #  Name           ch  angle    us  counts");
+        for (int i = 0; i < 6; i++) {
+            int phys = joints[i].invert
+                ? (joints[i].lo + joints[i].hi - joints[i].cur)
+                : joints[i].cur;
+            uint16_t c = toCounts(joints[i], phys);
+            unsigned long us = (unsigned long)c * 20000UL / 4096UL;
+            Serial.printf("  %d  %-12s  %2d  %3d deg  %4lu   %4u\n",
+                i, joints[i].name, joints[i].ch, joints[i].cur, us, c);
+        }
+    }
+    else if (cmd.startsWith("SWEEP ")) {
+        // SWEEP <joint> <start_counts> <end_counts> [step]  — blocks 1.5 s per step
+        int sp[4]; int ns = 0, p = 6;
+        while (ns < 4) {
+            int q = cmd.indexOf(' ', p);
+            sp[ns++] = (q < 0 ? cmd.substring(p) : cmd.substring(p, q)).toInt();
+            if (q < 0) break;
+            p = q + 1;
+        }
+        if (ns < 3) { Serial.println("Usage: SWEEP <joint> <start> <end> [step=10]"); return; }
+        int j = sp[0], st = sp[1], en = sp[2];
+        int step = (ns >= 4 ? constrain(abs(sp[3]), 1, 512) : 10);
+        if (j < 0 || j >= 6) { Serial.println("Joint 0-5"); return; }
+        if (en < st) step = -step;
+        st = constrain(st, 0, 4095); en = constrain(en, 0, 4095);
+        Serial.printf("[SWEEP] %s ch%d  %d->%d  step=%d  1.5s/step\n",
+            joints[j].name, joints[j].ch, st, en, step);
+        for (int c = st; step > 0 ? c <= en : c >= en; c += step) {
+            if (xSemaphoreTake(servoMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+                pca9685.setPWM(joints[j].ch, 0, c);
+                xSemaphoreGive(servoMutex);
+            }
+            Serial.printf("  counts=%4d  ~%4lu us  <- measure angle\n",
+                c, (unsigned long)c * 20000UL / 4096UL);
+            delay(1500);
+        }
+        Serial.println("[SWEEP] Done");
+    }
     else if (cmd == "HELP") {
         Serial.println("S <j> <a> | INVERT <j> | TEST | HOME/READY/PICK/PLACE");
         Serial.println("REC | PLAY | STOP | CYCLE | CLEAR | SAVE | LOAD | STATUS");
+        Serial.println("RAW <j> <counts> | SWEEP <j> <start> <end> [step] | CALSHOW");
     }
     else if (cmd.length() > 0) Serial.println("Unknown. HELP.");
 }
@@ -821,11 +898,6 @@ void processSerial() {
 void setup() {
     Serial.begin(115200);
     Serial.println("\n=== RoboArm 6-DOF (main_new) ===");
-
-    for (int a = 0; a <= 180; a++) {
-        long us = SERVO_MIN_US + (a * (SERVO_MAX_US - SERVO_MIN_US)) / 180;
-        pwmTable[a] = (uint16_t)((us * 4096UL) / 20000UL);
-    }
 
     servoMutex = xSemaphoreCreateMutex();
     wsQueue    = xQueueCreate(32, sizeof(WsMsg));
