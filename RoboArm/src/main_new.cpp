@@ -192,8 +192,14 @@ const char* buildPoses() {
     return posesBuf;
 }
 
-inline void broadcastStatus() { ws.textAll(buildStatus()); }
-inline void broadcastPoses()  { ws.textAll(buildPoses());  }
+inline void broadcastStatus() {
+    if (ws.count() == 0 || !ws.availableForWriteAll()) return;
+    ws.textAll(buildStatus());
+}
+inline void broadcastPoses() {
+    if (ws.count() == 0) return;
+    ws.textAll(buildPoses());
+}
 
 // ─── Recording ──────────────────────────────────────────────────────────────
 void recordPose() {
@@ -448,8 +454,8 @@ void processWsCmd(char* msg) {
 void onWsEvent(AsyncWebSocket*, AsyncWebSocketClient* client,
                AwsEventType type, void* arg, uint8_t* data, size_t len) {
     if (type == WS_EVT_CONNECT) {
-        client->text(buildStatus());
-        client->text(buildPoses());
+        if (client->canSend()) client->text(buildStatus());
+        if (client->canSend()) client->text(buildPoses());
     } else if (type == WS_EVT_DISCONNECT) {
         for (int j = 0; j < 6; j++) webJog[j] = 0;
     } else if (type == WS_EVT_DATA) {
@@ -571,7 +577,7 @@ button.amb.on{background:linear-gradient(180deg,#e6a817,#c08810);color:#111;bord
 <div id=toast></div>
 <script>
 const JD=[{n:'BASE',k:'B',mn:0,mx:180,hm:90},{n:'SHOULDER',k:'S',mn:30,mx:150,hm:90},{n:'ELBOW',k:'E',mn:0,mx:135,hm:90},{n:'WRIST P',k:'WP',mn:0,mx:180,hm:90},{n:'WRIST R',k:'WR',mn:0,mx:180,hm:90},{n:'GRIPPER',k:'G',mn:0,mx:90,hm:45}];
-let ps=[],s,rT,lastA=[90,90,90,90,90,45],lastPlayIdx=-1;
+let ps=[],s,rT,wl=null,lastA=[90,90,90,90,90,45],lastPlayIdx=-1;
 
 // Joint chips
 const jr=document.getElementById('jr');
@@ -579,12 +585,16 @@ JD.forEach((j,i)=>jr.insertAdjacentHTML('beforeend',`<div class=jc id=jc${i}><di
 
 // ── WebSocket
 function cn(){
+ if(document.hidden)return;
  s=new WebSocket(`ws://${location.hostname}/ws`);
- s.onopen=()=>{sd(1);tt('Connected');clearTimeout(rT)};
- s.onclose=()=>{sd(0);tt('Disconnected');rT=setTimeout(cn,2500)};
+ s.onopen=()=>{sd(1);tt('Connected');clearTimeout(rT);kl()};
+ s.onclose=()=>{sd(0);if(!document.hidden){tt('Disconnected');rT=setTimeout(cn,2000)}};
  s.onerror=()=>s.close();
  s.onmessage=(e)=>{const d=JSON.parse(e.data);if(d.t==='s')aS(d);else if(d.t==='p')aP(d)};
 }
+function kl(){if(navigator.wakeLock&&!wl)navigator.wakeLock.request('screen').then(l=>{wl=l;l.addEventListener('release',()=>wl=null)}).catch(()=>{})}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(!s||s.readyState!==1){clearTimeout(rT);cn()}kl()}});
+setInterval(()=>{if(s&&s.readyState===1)s.send('HB')},3000);
 function w(x){if(s&&s.readyState===1)s.send(x)}
 function sd(o){const d=document.getElementById('dt');d.classList.toggle('ok',!!o);d.classList.toggle('err',!o)}
 
@@ -930,10 +940,12 @@ void setup() {
         delay(400); Serial.print('.');
     }
     Serial.println();
-    if (WiFi.status() == WL_CONNECTED)
+    if (WiFi.status() == WL_CONNECTED) {
+        WiFi.setSleep(false);     // keep radio hot — phones already power-save aggressively
         Serial.printf("[WiFi] http://%s\n", WiFi.localIP().toString().c_str());
-    else
+    } else {
         Serial.println("[WiFi] FAILED");
+    }
 
     ws.onEvent(onWsEvent);
     server.addHandler(&ws);
@@ -955,9 +967,14 @@ void loop() {
     processPlayback();
     processSerial();
 
-    ws.cleanupClients();
+    static uint32_t lastCleanupMs = 0;
+    if (millis() - lastCleanupMs >= 1000) {
+        ws.cleanupClients(2);
+        lastCleanupMs = millis();
+    }
 
-    if (pendingBroadcast || ((joyActive || webJogActive) && millis() - lastBroadMs >= 50)) {
+    if ((pendingBroadcast || joyActive || webJogActive)
+        && millis() - lastBroadMs >= 50) {
         broadcastStatus();
         lastBroadMs      = millis();
         pendingBroadcast = false;
