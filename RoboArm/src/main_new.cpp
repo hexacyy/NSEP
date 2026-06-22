@@ -635,7 +635,7 @@ function bindStick(el){
  const jx=+el.dataset.jx,jy=+el.dataset.jy;
  const knob=el.querySelector('.knob');
  const st={el,knob,jx,jy,vx:0,vy:0,lvx:0,lvy:0,active:false,kbx:0,kby:0,gpx:0,gpy:0};
- function send(){w('JX:'+jx+':'+st.vx+':'+jy+':'+(-st.vy))}
+ function send(){w('JX:'+jx+':'+st.vx+':'+jy+':'+(st.vy))}
  st.send=send;
  function compose(){
   const cx=st.dx||st.kbx||st.gpx, cy=st.dy||st.kby||st.gpy;
@@ -744,7 +744,7 @@ function pollGP(){
 function tick(){
  pollGP();
  sticks[0].kbx=(keys.d?1:0)-(keys.a?1:0);
- sticks[0].kby=(keys.s?1:0)-(keys.w?1:0);
+ sticks[0].kby=(keys.w?1:0)-(keys.s?1:0);
  sticks[1].kbx=(keys.l?1:0)-(keys.j?1:0);
  sticks[1].kby=(keys.k?1:0)-(keys.i?1:0);
  trigs[0].kb=(keys.e?1:0)-(keys.q?1:0);
