@@ -193,7 +193,7 @@ const char* buildPoses() {
 }
 
 inline void broadcastStatus() {
-    if (ws.count() == 0 || !ws.availableForWriteAll()) return;
+    if (ws.count() == 0) return;
     ws.textAll(buildStatus());
 }
 inline void broadcastPoses() {
@@ -577,7 +577,7 @@ button.amb.on{background:linear-gradient(180deg,#e6a817,#c08810);color:#111;bord
 <div id=toast></div>
 <script>
 const JD=[{n:'BASE',k:'B',mn:0,mx:180,hm:90},{n:'SHOULDER',k:'S',mn:30,mx:150,hm:90},{n:'ELBOW',k:'E',mn:0,mx:135,hm:90},{n:'WRIST P',k:'WP',mn:0,mx:180,hm:90},{n:'WRIST R',k:'WR',mn:0,mx:180,hm:90},{n:'GRIPPER',k:'G',mn:0,mx:90,hm:45}];
-let ps=[],s,rT,wl=null,lastA=[90,90,90,90,90,45],lastPlayIdx=-1;
+let ps=[],s,rT,lastA=[90,90,90,90,90,45],lastPlayIdx=-1;
 
 // Joint chips
 const jr=document.getElementById('jr');
@@ -585,16 +585,12 @@ JD.forEach((j,i)=>jr.insertAdjacentHTML('beforeend',`<div class=jc id=jc${i}><di
 
 // ── WebSocket
 function cn(){
- if(document.hidden)return;
  s=new WebSocket(`ws://${location.hostname}/ws`);
- s.onopen=()=>{sd(1);tt('Connected');clearTimeout(rT);kl()};
- s.onclose=()=>{sd(0);if(!document.hidden){tt('Disconnected');rT=setTimeout(cn,2000)}};
+ s.onopen=()=>{sd(1);tt('Connected');clearTimeout(rT)};
+ s.onclose=()=>{sd(0);tt('Disconnected');rT=setTimeout(cn,2500)};
  s.onerror=()=>s.close();
  s.onmessage=(e)=>{const d=JSON.parse(e.data);if(d.t==='s')aS(d);else if(d.t==='p')aP(d)};
 }
-function kl(){if(navigator.wakeLock&&!wl)navigator.wakeLock.request('screen').then(l=>{wl=l;l.addEventListener('release',()=>wl=null)}).catch(()=>{})}
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(!s||s.readyState!==1){clearTimeout(rT);cn()}kl()}});
-setInterval(()=>{if(s&&s.readyState===1)s.send('HB')},3000);
 function w(x){if(s&&s.readyState===1)s.send(x)}
 function sd(o){const d=document.getElementById('dt');d.classList.toggle('ok',!!o);d.classList.toggle('err',!o)}
 
@@ -969,7 +965,7 @@ void loop() {
 
     static uint32_t lastCleanupMs = 0;
     if (millis() - lastCleanupMs >= 1000) {
-        ws.cleanupClients(2);
+        ws.cleanupClients();   // uses lib default; never evict an active client
         lastCleanupMs = millis();
     }
 
