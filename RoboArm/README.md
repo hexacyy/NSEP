@@ -100,6 +100,8 @@ Outbound JSON uses two message types: `{"t":"s",...}` for status (joint angles, 
 
 Joystick center is auto-calibrated at startup (64-sample average). Deadzone: ±300 counts. Update rate: every 20 ms.
 
+<img width="1920" height="936" alt="image" src="https://github.com/user-attachments/assets/0b33519a-7a54-425e-b52f-cccc793670e3" />
+
 ---
 
 ## Pose Recording & Persistence
@@ -142,7 +144,7 @@ Connect with `pio run -t monitor`. Send `HELP` for the full menu.
 
 **State broadcast.** Mutations set `pendingBroadcast = true`. The bottom of `loop()` coalesces and sends — rate-limited to 50 ms while the joystick is active.
 
----
+--
 
 ## Dependencies
 
