@@ -57,9 +57,9 @@ void setup() {
     pinMode(BTN_PLAY_PIN,  INPUT_PULLUP);
     pinMode(BTN_CLR_PIN,   INPUT_PULLUP);
     pinMode(BTN_CYCLE_PIN, INPUT_PULLUP);
-    for (int i = 0; i < 6; i++) joyF[i] = (float)joints[i].home;
 
     calibrateJoystick();
+    loadPresetsFromFlash();
     moveToHome();
     Serial.println("[Servos] Home");
 
@@ -85,6 +85,7 @@ void setup() {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest* req){
         req->send(200, "text/html", HTML_PAGE);
     });
+    registerHttpRoutes(server);                  // /poses.json GET + POST
     server.begin();
     Serial.println("Send HELP for serial commands.");
 }
@@ -98,6 +99,7 @@ void loop() {
     processWebJog();
     processButtons();
     processPlayback();
+    processMotion();          // ramps servoCur -> servoTarget at motionSpeed
     processSerial();
 
     static uint32_t lastCleanupMs = 0;

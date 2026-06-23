@@ -105,6 +105,16 @@ void processWsCmd(char* msg) {
             if (p) { for (int i = 0; i < 6; i++) setServo(i, p[i]); pendingBroadcast = true; }
             break;
         }
+        case TAG('S','P'): {                             // Set Preset from current
+            if (!args[0]) break;
+            uint8_t idx = 255;
+            if      (!strcmp(args[0], "home"))  idx = 0;
+            else if (!strcmp(args[0], "ready")) idx = 1;
+            else if (!strcmp(args[0], "pick"))  idx = 2;
+            else if (!strcmp(args[0], "place")) idx = 3;
+            if (idx < 4) setPresetFromCurrent(idx);
+            break;
+        }
         case TAG('M','D'): {
             if (!args[0]) break;
             int m = atoi(args[0]);
@@ -138,6 +148,92 @@ void processWsCmd(char* msg) {
         case TAG('S','A'): saveToFlash(); break;
         case TAG('L','D'): loadFromFlash(); broadcastPoses(); break;
     }
+}
+
+// ── JSON poses import (forgiving parser, fixed-shape) ───────────────────────
+int importPosesFromJson(const char* buf, size_t len) {
+    const char* end = buf + len;
+    const char* p   = buf;
+    int newLen = 0;
+
+    while (p < end && newLen < MAX_POSES) {
+        const char* a = strstr(p, "\"a\"");
+        if (!a || a >= end) break;
+        const char* lb = strchr(a, '[');
+        if (!lb || lb >= end) break;
+        p = lb + 1;
+
+        for (int k = 0; k < 6; k++) {
+            while (p < end && (*p == ' ' || *p == ',' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
+            char* np = nullptr;
+            long v = strtol(p, &np, 10);
+            if (np == p) { v = 0; }
+            else         { p = np; }
+            seq[newLen].a[k] = (int)v;
+        }
+
+        seq[newLen].label[0] = '\0';
+        const char* nField = strstr(p, "\"n\"");
+        const char* nextA  = strstr(p, "\"a\"");
+        if (nField && (!nextA || nField < nextA)) {
+            const char* q = strchr(nField, ':');
+            if (q) {
+                q++;
+                while (q < end && *q != '"') q++;
+                if (q < end) {
+                    q++;
+                    int li = 0;
+                    while (q < end && *q != '"' && li < (int)sizeof(seq[newLen].label) - 1)
+                        seq[newLen].label[li++] = *q++;
+                    seq[newLen].label[li] = '\0';
+                    p = (q < end) ? q + 1 : end;
+                }
+            }
+        }
+        if (seq[newLen].label[0] == '\0')
+            snprintf(seq[newLen].label, sizeof(seq[newLen].label), "Pose %d", newLen + 1);
+        newLen++;
+    }
+
+    seqLen = newLen;
+    isPlaying = false; isCycling = false; playIdx = 0;
+    saveToFlash();
+    pendingBroadcast = true;
+    return newLen;
+}
+
+// ── HTTP routes: download/upload poses as JSON ──────────────────────────────
+// GET  /poses.json — current sequence, downloaded as poses.json
+// POST /poses.json — body is JSON, replaces sequence and persists to flash
+static char    importBuf[3200];
+static size_t  importLen = 0;
+
+void registerHttpRoutes(AsyncWebServer& srv) {
+    srv.on("/poses.json", HTTP_GET, [](AsyncWebServerRequest* req){
+        AsyncWebServerResponse* r = req->beginResponse(200, "application/json", buildPoses());
+        r->addHeader("Content-Disposition", "attachment; filename=poses.json");
+        req->send(r);
+    });
+
+    srv.on("/poses.json", HTTP_POST,
+        [](AsyncWebServerRequest* req){
+            importBuf[importLen] = '\0';
+            int n = importPosesFromJson(importBuf, importLen);
+            importLen = 0;
+            char resp[64];
+            snprintf(resp, sizeof(resp), "{\"ok\":true,\"n\":%d}", n);
+            req->send(200, "application/json", resp);
+            broadcastPoses();
+        },
+        nullptr,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total){
+            if (index == 0) importLen = 0;
+            if (importLen + len < sizeof(importBuf)) {
+                memcpy(importBuf + importLen, data, len);
+                importLen += len;
+            }
+        }
+    );
 }
 
 void onWsEvent(AsyncWebSocket*, AsyncWebSocketClient* client,
@@ -185,12 +281,25 @@ void processSerial() {
         for (int i = 0; i < 6; i++) {
             Serial.printf("  %d %s ch%d  lo=%d hi=%d\n",
                 i, joints[i].name, joints[i].ch, joints[i].lo, joints[i].hi);
-            setServo(i, joints[i].lo);   delay(600);
-            setServo(i, joints[i].home); delay(600);
-            setServo(i, joints[i].hi);   delay(600);
-            setServo(i, joints[i].home); delay(600);
+            setServoNow(i, joints[i].lo);   delay(600);
+            setServoNow(i, joints[i].home); delay(600);
+            setServoNow(i, joints[i].hi);   delay(600);
+            setServoNow(i, joints[i].home); delay(600);
         }
         pendingBroadcast = true;
+    }
+    else if (cmd.startsWith("SPEED")) {
+        if (cmd.length() <= 5) {
+            Serial.printf("[MOTION] speed = %.1f deg/sec\n", motionSpeed);
+        } else {
+            float v = cmd.substring(6).toFloat();
+            if (v >= 5.0f && v <= 1000.0f) {
+                motionSpeed = v;
+                Serial.printf("[MOTION] speed = %.1f deg/sec\n", motionSpeed);
+            } else {
+                Serial.println("Usage: SPEED <5..1000 deg/sec>");
+            }
+        }
     }
     else if (cmd == "HOME")  { applyPreset(POSE_HOME);  pendingBroadcast = true; }
     else if (cmd == "READY") { applyPreset(POSE_READY); pendingBroadcast = true; }
@@ -281,6 +390,7 @@ void processSerial() {
     else if (cmd == "HELP") {
         Serial.println("S <j> <a> | INVERT <j> | TEST | HOME/READY/PICK/PLACE");
         Serial.println("REC | PLAY | STOP | CYCLE | CLEAR | SAVE | LOAD | STATUS");
+        Serial.println("SPEED [deg/sec]  - smooth motion ramp rate (default 120)");
         Serial.println("RAW <j> <counts> | SWEEP <j> <start> <end> [step] | CALSHOW");
     }
     else if (cmd.length() > 0) Serial.println("Unknown. HELP.");

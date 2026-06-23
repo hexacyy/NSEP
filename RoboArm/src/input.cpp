@@ -1,4 +1,6 @@
 // ─── input.cpp — HW joystick, buttons, and web jog ──────────────────────────
+// All motion paths just push into servoTarget[] — the motion engine in
+// arm.cpp ramps servoCur[] toward target at motionSpeed.
 #include "input.h"
 #include "arm.h"
 #include "globals.h"
@@ -15,7 +17,6 @@ const char*   PAIR_NAME[3] = { "Base+Shoulder", "Elbow+Wrist Pitch", "Wrist Roll
 
 // ── Web jog state ───────────────────────────────────────────────────────────
 int      webJog[6]    = {0,0,0,0,0,0};
-float    webJogAcc[6] = {0,0,0,0,0,0};
 uint32_t lastWebJogMs = 0;
 bool     webJogActive = false;
 
@@ -53,16 +54,12 @@ void processJoystick() {
     uint8_t jB = PAIR[joyMode][1];
     joyActive = (xD != 0.0f || yD != 0.0f);
 
-    if (xD != 0.0f) {
-        joyF[jA] = constrain(joyF[jA] + xD, (float)joints[jA].lo, (float)joints[jA].hi);
-        int a = (int)joyF[jA];
-        if (a != joints[jA].cur) sendPWM(jA, a);
-    }
-    if (yD != 0.0f) {
-        joyF[jB] = constrain(joyF[jB] + yD, (float)joints[jB].lo, (float)joints[jB].hi);
-        int b = (int)joyF[jB];
-        if (b != joints[jB].cur) sendPWM(jB, b);
-    }
+    if (xD != 0.0f)
+        servoTarget[jA] = constrain(servoTarget[jA] + xD,
+                                    (float)joints[jA].lo, (float)joints[jA].hi);
+    if (yD != 0.0f)
+        servoTarget[jB] = constrain(servoTarget[jB] + yD,
+                                    (float)joints[jB].lo, (float)joints[jB].hi);
 }
 
 // ── Buttons ─────────────────────────────────────────────────────────────────
@@ -82,25 +79,20 @@ void processButtons() {
 }
 
 // ── Web jog ─────────────────────────────────────────────────────────────────
+// webJog[j] is -100..100 from sticks/keyboard/gamepad. Per tick we push the
+// target float by (webJog/100)*WEB_JOG_SPEED. Motion engine catches up.
 void processWebJog() {
     if (isPlaying || isCycling) { webJogActive = false; return; }
     if (millis() - lastWebJogMs < WEB_JOG_INTERVAL) return;
     lastWebJogMs = millis();
 
-    bool moved = false, anyActive = false;
+    bool anyActive = false;
     for (int j = 0; j < 6; j++) {
-        if (webJog[j] == 0) { webJogAcc[j] = 0; continue; }
+        if (webJog[j] == 0) continue;
         anyActive = true;
-        webJogAcc[j] += (webJog[j] / 100.0f) * WEB_JOG_SPEED;
-        int delta = (int)webJogAcc[j];
-        if (delta == 0) continue;
-        int target = constrain(joints[j].cur + delta, joints[j].lo, joints[j].hi);
-        if (target == joints[j].cur) { webJogAcc[j] = 0; continue; }
-        webJogAcc[j] -= (target - joints[j].cur);
-        sendPWM(j, target);
-        joyF[j] = (float)target;
-        moved = true;
+        float d = (webJog[j] / 100.0f) * WEB_JOG_SPEED;
+        servoTarget[j] = constrain(servoTarget[j] + d,
+                                   (float)joints[j].lo, (float)joints[j].hi);
     }
     webJogActive = anyActive;
-    if (moved) pendingBroadcast = true;
 }

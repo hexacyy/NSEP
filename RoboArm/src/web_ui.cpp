@@ -14,7 +14,8 @@ body{font-family:Segoe UI,system-ui,sans-serif;background:radial-gradient(circle
 .hud .pill{background:var(--p2);padding:3px 8px;border-radius:10px;color:var(--mu);font-size:.7rem}
 .hud .pill b{color:var(--ac3);font-weight:700}
 .jr{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:10px}
-.jc{background:var(--p2);border-radius:8px;padding:7px 4px;text-align:center;border:1px solid transparent;transition:border-color .15s,box-shadow .15s}
+.jc{background:var(--p2);border-radius:8px;padding:7px 4px;text-align:center;border:1px solid transparent;transition:border-color .15s,box-shadow .15s;cursor:pointer}
+.jc:hover{border-color:#2a3a5e}
 .jc.act{border-color:var(--ac);box-shadow:0 0 10px rgba(233,69,96,.3)}
 .jc .l{font-size:.6rem;color:#789;letter-spacing:1px}
 .jc .v{font-size:1.05rem;color:var(--ac);font-weight:800;font-family:Consolas,monospace}
@@ -76,11 +77,11 @@ button.amb.on{background:linear-gradient(180deg,#e6a817,#c08810);color:#111;bord
  <div class=tw><div class=ttl>GRIPPER</div><div class=trk id=tG data-j=5><div class=tnb></div></div><div class=kbd><kbd>Z</kbd><kbd>X</kbd></div></div>
 </div>
 <div class=p><h2>Presets</h2><div class=g4>
- <button onclick="w('PR:home');tt('Home')">&#127968; Home</button>
- <button onclick="w('PR:ready');tt('Ready')">&#9889; Ready</button>
- <button onclick="w('PR:pick');tt('Pick')">&#129693; Pick</button>
- <button onclick="w('PR:place');tt('Place')">&#128230; Place</button>
-</div></div>
+ <button class=ps data-pn=home data-pl=Home>&#127968; Home</button>
+ <button class=ps data-pn=ready data-pl=Ready>&#9889; Ready</button>
+ <button class=ps data-pn=pick data-pl=Pick>&#129693; Pick</button>
+ <button class=ps data-pn=place data-pl=Place>&#128230; Place</button>
+</div><div class=kbd style=margin-top:7px>Tap to go &mdash; long-press to save current position</div></div>
 <div class=p><h2>Recording <span class=bd id=rc>0</span></h2>
  <div class=g4 style=margin-bottom:7px>
   <button class=grn onclick="w('RC');tt('Recorded')">&#9679; REC</button>
@@ -93,6 +94,11 @@ button.amb.on{background:linear-gradient(180deg,#e6a817,#c08810);color:#111;bord
   <button onclick="w('SA');tt('Saved')">&#128190; Save</button>
   <button onclick="w('LD');tt('Loading')">&#128228; Load</button>
  </div>
+ <div class=g2 style=margin-top:7px>
+  <button onclick="eP()">&#11015; Export JSON</button>
+  <button onclick="document.getElementById('iF').click()">&#11014; Import JSON</button>
+ </div>
+ <input type=file id=iF accept=".json,application/json" style=display:none>
  <div class=pl id=pls></div>
  <div class=kbd style=margin-top:8px><kbd>SPACE</kbd>rec <kbd>P</kbd>play <kbd>O</kbd>stop <kbd>C</kbd>cycle <kbd>H</kbd>home</div>
 </div>
@@ -101,9 +107,32 @@ button.amb.on{background:linear-gradient(180deg,#e6a817,#c08810);color:#111;bord
 const JD=[{n:'BASE',k:'B',mn:0,mx:180,hm:90},{n:'SHOULDER',k:'S',mn:30,mx:150,hm:90},{n:'ELBOW',k:'E',mn:0,mx:135,hm:90},{n:'WRIST P',k:'WP',mn:0,mx:180,hm:90},{n:'WRIST R',k:'WR',mn:0,mx:180,hm:90},{n:'GRIPPER',k:'G',mn:0,mx:90,hm:45}];
 let ps=[],s,rT,lastA=[90,90,90,90,90,45],lastPlayIdx=-1;
 
-// Joint chips
+// Joint chips — click to manually set angle (server clamps to joint limits)
 const jr=document.getElementById('jr');
-JD.forEach((j,i)=>jr.insertAdjacentHTML('beforeend',`<div class=jc id=jc${i}><div class=l>${j.k}</div><div class=v id=v${i}>--</div></div>`));
+JD.forEach((j,i)=>jr.insertAdjacentHTML('beforeend',`<div class=jc id=jc${i} title="Tap to set angle"><div class=l>${j.k}</div><div class=v id=v${i}>--</div></div>`));
+JD.forEach((j,i)=>document.getElementById('jc'+i).addEventListener('click',()=>edJ(i)));
+let edBusy=-1;
+function edJ(i){
+ if(edBusy===i)return;
+ edBusy=i;
+ const v=document.getElementById('v'+i),cur=lastA[i];
+ v.innerHTML=`<input class=ri type=number value="${cur}" min=0 max=270 style="width:62px;font-size:.9rem;text-align:center">`;
+ const I=v.querySelector('input');I.focus();I.select();
+ const done=ok=>{
+  if(ok){
+   const a=parseInt(I.value);
+   if(!isNaN(a))w('SV:'+i+':'+a);
+  }
+  v.textContent=lastA[i]+'°';
+  edBusy=-1;
+ };
+ I.onblur=()=>done(true);
+ I.onkeydown=ev=>{
+  if(ev.key==='Enter')done(true);
+  else if(ev.key==='Escape')done(false);
+  ev.stopPropagation();
+ };
+}
 
 // ── WebSocket
 function cn(){
@@ -123,7 +152,7 @@ function tt(m){const e=document.getElementById('toast');e.textContent=m;e.classL
 // ── Apply status / poses
 function aS(d){
  d.j.forEach((a,i)=>{
-  document.getElementById('v'+i).textContent=a+'°';
+  if(edBusy!==i)document.getElementById('v'+i).textContent=a+'°';
   const c=document.getElementById('jc'+i);
   if(a!==lastA[i]){c.classList.add('act');clearTimeout(c._t);c._t=setTimeout(()=>c.classList.remove('act'),250)}
   lastA[i]=a;
@@ -184,7 +213,8 @@ function bindStick(el){
   const py=e.touches?e.touches[0].clientY:e.clientY;
   let dx=(px-cx)/(r.width/2),dy=(py-cy)/(r.height/2);
   const mag=Math.hypot(dx,dy);if(mag>1){dx/=mag;dy/=mag}
-  st.dx=dx;st.dy=dy;compose();
+  // Negate so touch matches keyboard convention (and the flipped visual).
+  st.dx=-dx;st.dy=-dy;compose();
  }
  st._move=move;st._end=end;
  el.addEventListener('mousedown',start);el.addEventListener('touchstart',start,{passive:false});
@@ -288,5 +318,52 @@ function tick(){
 setInterval(tick,50);
 
 function dc(){if(confirm('Clear all recorded poses?')){w('CL');tt('Cleared')}}
+
+// ── Presets: tap = goto, long-press = save current angles as that preset
+document.querySelectorAll('.ps').forEach(btn=>{
+ const n=btn.dataset.pn,lbl=btn.dataset.pl;
+ let timer=null,longFired=false;
+ const start=e=>{
+  longFired=false;
+  timer=setTimeout(()=>{
+   longFired=true;
+   if(confirm('Save current arm position as "'+lbl+'" preset?')){
+    w('SP:'+n);tt(lbl+' saved');
+   }
+  },650);
+ };
+ const cancel=()=>clearTimeout(timer);
+ btn.addEventListener('mousedown',start);
+ btn.addEventListener('touchstart',start,{passive:true});
+ btn.addEventListener('mouseup',cancel);
+ btn.addEventListener('mouseleave',cancel);
+ btn.addEventListener('touchend',cancel);
+ btn.addEventListener('touchcancel',cancel);
+ btn.onclick=()=>{
+  if(longFired){longFired=false;return}
+  w('PR:'+n);tt(lbl);
+ };
+});
+
+// ── Export / Import poses ────────────────────────────────────────────────
+function eP(){
+ fetch('/poses.json').then(r=>r.blob()).then(b=>{
+  const u=URL.createObjectURL(b),a=document.createElement('a');
+  a.href=u;a.download='poses.json';document.body.appendChild(a);a.click();
+  a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);
+  tt('Exported '+ps.length+' pose'+(ps.length===1?'':'s'));
+ }).catch(()=>tt('Export failed'));
+}
+document.getElementById('iF').onchange=e=>{
+ const f=e.target.files[0];if(!f)return;
+ const r=new FileReader();
+ r.onload=()=>{
+  fetch('/poses.json',{method:'POST',headers:{'Content-Type':'application/json'},body:r.result})
+   .then(rs=>rs.json()).then(j=>tt('Imported '+(j.n||0)+' pose'+(j.n===1?'':'s')))
+   .catch(()=>tt('Import failed'));
+ };
+ r.readAsText(f);e.target.value='';
+};
+
 cn();
 </script></body></html>)raw";
