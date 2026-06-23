@@ -7,6 +7,7 @@ This repository contains firmware and example sketches for two embedded robotics
 ## Projects
 
 ### 1. RoboArm — 6-DOF Desktop Robot Arm
+<img width="608" height="1080" alt="ARM" src="https://github.com/user-attachments/assets/37a481f8-6754-4dc3-8f2f-754e2e25a195" />
 
 **Folder:** `RoboArm/`
 
@@ -60,6 +61,7 @@ Active source file: `src/main_new.cpp` (set via `build_src_filter` in `platformi
 ---
 
 ### 2. Mecanum Robot — 4WD Omnidirectional Robot
+<img width="608" height="1080" alt="AMR" src="https://github.com/user-attachments/assets/d261068e-1431-4faa-b801-f29a2ecc0bc4" />
 
 **Folder:** `Mecanum Robot/`
 
